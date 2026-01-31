@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import shutil
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -206,10 +206,10 @@ class ClaudeCodeClient:
         return json.dumps(result, ensure_ascii=False, indent=2)
 
     async def execute_task_streaming(
-        self, 
+        self,
         prompt: str,
         session_id: Optional[str] = None,
-        on_chunk: Optional[callable] = None
+        on_chunk: Optional[Callable] = None
     ) -> Dict[str, Any]:
         """
         Выполнить задачу со стримингом (для длинных задач)
