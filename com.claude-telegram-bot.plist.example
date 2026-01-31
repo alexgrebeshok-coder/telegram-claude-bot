@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude-telegram-bot</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/aleksandrgrebeshok/Проекты VScode/telegram_claude_bot/run.py</string>
+    </array>
+    
+    <key>WorkingDirectory</key>
+    <string>/Users/aleksandrgrebeshok/Проекты VScode/telegram_claude_bot</string>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/Users/aleksandrgrebeshok/.local/bin</string>
+    </dict>
+    
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <key>KeepAlive</key>
+    <true/>
+    
+    <key>StandardOutPath</key>
+    <string>/Users/aleksandrgrebeshok/Проекты VScode/telegram_claude_bot/bot.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/Users/aleksandrgrebeshok/Проекты VScode/telegram_claude_bot/bot_error.log</string>
+</dict>
+</plist>

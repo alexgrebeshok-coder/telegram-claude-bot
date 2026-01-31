@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  bot:
+    build: .
+    container_name: telegram-claude-bot
+    restart: unless-stopped
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - ADMIN_IDS=${ADMIN_IDS}
+      - CLAUDE_WORKING_DIR=/workspace
+      - CLAUDE_TIMEOUT=${CLAUDE_TIMEOUT:-600}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      # Данные бота (SQLite база)
+      - ./data:/app/data
+      # Рабочая директория для Claude (опционально)
+      - ${CLAUDE_WORKING_DIR:-./workspace}:/workspace
+      # Vosk модель для распознавания речи (опционально)
+      - ./vosk-model-small-ru:/app/vosk-model-small-ru:ro
+    # Примечание: Claude CLI должен быть установлен на хосте
+    # Для полной работы требуется доступ к claude binary
