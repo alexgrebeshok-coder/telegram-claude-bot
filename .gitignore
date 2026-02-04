@@ -17,9 +17,12 @@
 # Old documentation files
 _OLD_DOCS/
 
-# Vosk models (too large for git)
+# Vosk models (deprecated, replaced by whisper.cpp)
 vosk-model-small-ru/
 vosk-model.zip
+
+# Whisper.cpp (too large for git)
+whisper.cpp/
 
 # Python
 __pycache__/

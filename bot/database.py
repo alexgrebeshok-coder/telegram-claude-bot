@@ -26,6 +26,16 @@ class Database:
             )
         """)
 
+        # Выбор модели пользователя (чтобы голос/медиа видели выбор даже после перезапуска)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_settings (
+                user_id INTEGER PRIMARY KEY,
+                model_key TEXT NOT NULL DEFAULT 'sonnet',
+                updated_at TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+
         # Таблица задач
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS tasks (
@@ -60,6 +70,33 @@ class Database:
         user = self.get_user(user_id)
         conn.close()
         return user
+
+    def get_user_model_key(self, user_id: int, default: str = "sonnet") -> str:
+        """Получить выбранную модель пользователя из БД."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT model_key FROM user_settings WHERE user_id = ?",
+            (user_id,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row and row[0] else default
+
+    def set_user_model_key(self, user_id: int, model_key: str) -> None:
+        """Сохранить выбранную модель пользователя в БД."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        now = datetime.now().isoformat()
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO user_settings (user_id, model_key, updated_at)
+            VALUES (?, ?, ?)
+            """,
+            (user_id, model_key, now),
+        )
+        conn.commit()
+        conn.close()
 
     def get_user(self, user_id: int) -> Optional[User]:
         """Получить пользователя по ID"""

@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-01-31
+
+### Changed
+- **Распознавание речи**: Vosk заменён на whisper.cpp
+  - Лучшее качество распознавания русского языка
+  - Metal acceleration на Apple Silicon (M1/M2/M3)
+  - Модель: ggml-small-q5_1.bin (~190 МБ, quantized)
+  - Скорость: ~10× real-time на M2 (1 мин аудио = ~6 сек)
+
+### Removed
+- Зависимость `vosk` из requirements.txt
+- Поддержка vosk-model-small-ru
+
+### Added
+- Конфигурация whisper.cpp в .env (WHISPER_CPP_PATH, WHISPER_MODEL_PATH, WHISPER_TIMEOUT)
+- Тесты: `tests/test_speech_whisper.py`
+
+### Documentation
+- README.md: инструкции по установке whisper.cpp с Metal
+- CLAUDE.local.md: обновлена документация распознавания речи
+- docker-compose.yml: volume для whisper.cpp вместо Vosk
+
+---
+
 ## [2.0.0] - 2026-01-30
 
 ### Added

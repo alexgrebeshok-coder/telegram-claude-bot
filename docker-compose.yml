@@ -16,7 +16,7 @@ services:
       - ./data:/app/data
       # Рабочая директория для Claude (опционально)
       - ${CLAUDE_WORKING_DIR:-./workspace}:/workspace
-      # Vosk модель для распознавания речи (опционально)
-      - ./vosk-model-small-ru:/app/vosk-model-small-ru:ro
+      # whisper.cpp для распознавания речи (опционально, macOS Metal не в Docker)
+      - ./whisper.cpp:/app/whisper.cpp:ro
     # Примечание: Claude CLI должен быть установлен на хосте
     # Для полной работы требуется доступ к claude binary

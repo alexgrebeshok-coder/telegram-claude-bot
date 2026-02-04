@@ -33,6 +33,8 @@ Telegram бот для удалённого взаимодействия с Clau
 
 **Ключевой принцип:** Claude работает локально на компьютере пользователя, имеет доступ к файлам и проектам, использует подписку Claude (не API ключ).
 
+**Крабик и OpenClaw:** если бот «Крабик» настраивается как канал OpenClaw, для его работы **не нужны отдельные серверы Flask и MCP** — достаточно OpenClaw Gateway. Токен Крабика задаётся в OpenClaw; этот репозиторий с тем же токеном не запускают. Подробно: [OPENCLAW_CRAB_SETUP.md](OPENCLAW_CRAB_SETUP.md).
+
 ---
 
 ## Структура проекта
@@ -58,7 +60,7 @@ telegram_claude_bot/
 │   └── utils/
 │       ├── __init__.py
 │       ├── file_sender.py    # Отправка файлов из ответов Claude
-│       ├── speech.py         # Распознавание речи (Vosk)
+│       ├── speech.py         # Распознавание речи (whisper.cpp)
 │       └── text_formatter.py # Очистка MD-разметки
 ├── tests/
 │   ├── __init__.py
@@ -92,7 +94,7 @@ telegram_claude_bot/
 | База данных | SQLite + aiosqlite | 0.19.0 |
 | HTTP клиент | aiohttp | 3.9.1 |
 | Валидация | Pydantic | 2.5.0 |
-| Распознавание речи | Vosk | 0.3.45+ |
+| Распознавание речи | whisper.cpp + Metal | - |
 | Синтез речи | edge-tts | 6.1.0+ |
 | Аудио обработка | pydub + ffmpeg | - |
 | Python | 3.10+ | - |
@@ -109,7 +111,7 @@ telegram_claude_bot/
 ### 2. Обработка файлов (входящие)
 - **Фото** → сохраняет в `/tmp/claude_bot/photos/`, анализ через Vision
 - **Документы** → сохраняет в `/tmp/claude_bot/documents/`, передаёт путь Claude
-- **Голосовые** → распознаёт офлайн (Vosk), выполняет как текст
+- **Голосовые** → распознаёт офлайн (whisper.cpp), выполняет как текст
 - **Аудио** → передаёт путь для обработки
 
 ### 3. Отправка файлов (исходящие)
@@ -153,6 +155,11 @@ DATABASE_URL=sqlite:///claude_bot.db
 
 # Logging
 LOG_LEVEL=INFO
+
+# Whisper.cpp (опционально)
+# WHISPER_CPP_PATH=./whisper.cpp/whisper-cli
+# WHISPER_MODEL_PATH=./whisper.cpp/ggml-small-q5_1.bin
+# WHISPER_TIMEOUT=60
 ```
 
 ### Claude CLI настройки
@@ -180,7 +187,7 @@ claude -p "prompt" --model MODEL --dangerously-skip-permissions
 Обработка медиа-сообщений:
 - `handle_photo()` — фото с Vision
 - `handle_document()` — документы (до 20 МБ)
-- `handle_voice()` — голосовые → Vosk → текст
+- `handle_voice()` — голосовые → whisper.cpp → текст
 - `handle_audio()` — аудио файлы
 
 ### bot/utils/file_sender.py
@@ -191,8 +198,9 @@ claude -p "prompt" --model MODEL --dangerously-skip-permissions
 
 ### bot/utils/speech.py
 Распознавание речи:
-- Модель: vosk-model-small-ru
-- Конвертация OGG → WAV через ffmpeg
+- whisper.cpp (whisper-cli) с Metal на Apple Silicon
+- Модель: ggml-small-q5_1.bin (~190 МБ)
+- Конвертация OGG → WAV через ffmpeg (для голосовых Telegram)
 - Офлайн, без API ключей
 
 ### bot/utils/text_formatter.py
@@ -279,7 +287,7 @@ docker-compose up -d
 ### v2.0.0 (30 января 2026)
 - Приём файлов: фото, документы, голосовые, аудио
 - Автоматическая отправка файлов из ответов Claude
-- Распознавание речи (Vosk, офлайн)
+- Распознавание речи (whisper.cpp, офлайн, Metal)
 - Очистка MD-разметки
 - CI/CD pipeline
 - Docker support
@@ -355,7 +363,7 @@ ruff check bot/
 
 - **GitHub:** https://github.com/alexgrebeshok-coder/telegram-claude-bot
 - **Claude Code:** https://docs.anthropic.com/en/docs/build-with-claude/claude-code
-- **Vosk:** https://alphacephei.com/vosk/
+- **whisper.cpp:** https://github.com/ggml-org/whisper.cpp
 - **aiogram:** https://aiogram.dev/
 
 ---

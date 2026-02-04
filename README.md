@@ -10,10 +10,11 @@ Telegram бот для удалённого взаимодействия с Clau
 
 - **Текстовые запросы** к Claude Code
 - **Обработка файлов**: фото, документы, аудио
-- **Распознавание речи** через Vosk (офлайн, без API-ключей)
+- **Распознавание речи** через whisper.cpp (офлайн, Metal на Apple Silicon)
 - **Автоматическая отправка файлов** из ответов Claude
 - **Управление сессиями**: продолжать или начинать новые диалоги
-- **Выбор модели**: Claude Opus 4.5, Sonnet 4.5, Haiku 4.5
+- **Выбор модели**: Claude Opus 4.5, Sonnet 4.5, Haiku 4.5 и **GLM 4.7** (удалённый API Zhipu AI)
+- **Общая локальная память**: все диалоги сохраняются в Markdown в `BOT_MEMORY_DIR` для использования другими моделями и ресурсами на компьютере
 - **История задач** и отслеживание статуса
 
 ## Как это работает
@@ -45,10 +46,13 @@ Telegram бот для удалённого взаимодействия с Clau
 - Работает **без подтверждений** (автоматически)
 - **Сессии сохраняются** — можно продолжить диалог
 
+**Крабик и OpenClaw:** если бот «Крабик» должен работать через [OpenClaw](https://docs.clawd.bot/) (Gateway, без Flask/MCP), токен настраивается в OpenClaw, а этот репозиторий с тем же токеном не запускают. Пошаговая настройка: [OPENCLAW_CRAB_SETUP.md](OPENCLAW_CRAB_SETUP.md).
+
 ## Системные требования
 
 - **Python** 3.10 или выше
-- **ffmpeg** для обработки аудио (для распознавания речи)
+- **ffmpeg** для конвертации аудио (голосовые Telegram → WAV)
+- **whisper.cpp** с Metal (для распознавания речи на macOS M1/M2/M3)
 - **Claude Code CLI** должен быть установлен и настроен
 - **macOS/Linux** (для автоматического запуска через launchd/systemd)
 
@@ -90,26 +94,32 @@ brew install ffmpeg
 sudo apt install ffmpeg
 ```
 
-### 3. Установка модели Vosk для распознавания речи
+### 3. Установка whisper.cpp для распознавания речи
 
-Скачайте и распакуйте русскую модель Vosk:
+**macOS (Apple Silicon) — сборка с Metal:**
 
 ```bash
-# Скачайте модель с https://alphacephei.com/vosk/models
-# Например: vosk-model-small-ru
+# Клонировать и собрать whisper.cpp
+cd /tmp
+git clone https://github.com/ggml-org/whisper.cpp
+cd whisper.cpp
+cmake -B build -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON
+cmake --build build -j --config Release
 
-# Распакуйте в папку проекта
-unzip vosk-model-small-ru.zip
+# Скопировать бинарник в проект
+cp build/bin/whisper-cli /path/to/telegram_claude_bot/whisper.cpp/
+
+# Скачать модель (small, quantized, ~190 МБ)
+cd /path/to/telegram_claude_bot/whisper.cpp
+curl -L -o ggml-small-q5_1.bin "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin?download=true"
 ```
 
-Модель должна находиться в папке проекта:
+Структура после установки:
 ```
 telegram_claude_bot/
-├── vosk-model-small-ru/    ← Модель Vosk
-│   ├── am/
-│   ├── conf/
-│   ├── graph/
-│   └── ivector/
+├── whisper.cpp/
+│   ├── whisper-cli      ← Бинарник
+│   └── ggml-small-q5_1.bin  ← Модель (~190 МБ)
 └── ...
 ```
 
@@ -141,7 +151,18 @@ DATABASE_URL=sqlite:///claude_bot.db
 
 # Logging
 LOG_LEVEL=INFO
+
+# GLM 4.7 (Zhipu AI, удалённый API — опционально)
+# GLM_API_KEY=ваш_ключ_zhipu
+
+# Общая память: директория для диалогов в Markdown (по умолчанию: CLAUDE_WORKING_DIR/bot_memory)
+# BOT_MEMORY_DIR=/path/to/bot_memory
 ```
+
+### Системный промпт (append)
+
+Бот использует **добавочный** системный промпт (append), чтобы не терять встроенные инструкции Claude Code.  
+Файл по умолчанию: `append_system_prompt.md` (можно переопределить через `SYSTEM_PROMPT_FILE` в `.env`).
 
 ### 5. Настройка Claude CLI
 
@@ -177,6 +198,16 @@ cp com.claude-telegram-bot.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.claude-telegram-bot.plist
 ```
 
+### Проверка работы после восстановления
+
+1. Убедитесь, что запущен только один экземпляр бота (иначе Telegram вернёт Conflict):
+   ```bash
+   launchctl list | grep claude-telegram
+   ```
+2. В Telegram отправьте боту **/start** — должен прийти приветственный текст и меню.
+3. Отправьте короткое сообщение (например, «Привет» или «2+2») — должен появиться индикатор «⏳», затем ответ от Claude или GLM (или явная ошибка: «❌ Claude Code CLI не найден», «⏱️ Таймаут»).
+4. Логи: `tail -f bot.log` в каталоге бота.
+
 ## Использование
 
 ### Прямые сообщения
@@ -206,7 +237,7 @@ Claude: Файл bot.py — это главный модуль Telegram бота
 
 - **Фото** — анализирует изображение через Claude Vision
 - **Документы** (PDF, DOCX, TXT и др.) — читает и анализирует
-- **Голосовые сообщения** — распознаёт через Vosk и выполняет как текст
+- **Голосовые сообщения** — распознаёт через whisper.cpp и выполняет как текст
 - **Аудио файлы** — передаёт путь для обработки
 
 Пример использования:
@@ -264,18 +295,19 @@ telegram_claude_bot/
 │   ├── utils/
 │   │   ├── text_formatter.py  # Очистка MD-разметки
 │   │   ├── file_sender.py     # Отправка файлов
-│   │   └── speech.py         # Распознавание речи (Vosk)
+│   │   └── speech.py         # Распознавание речи (whisper.cpp)
 │   ├── keyboards.py       # Клавиатуры Telegram
 │   ├── main.py            # Запуск бота
 │   ├── models.py          # Модели данных
 │   ├── database.py        # SQLite база данных
 │   ├── states.py          # FSM состояния
 │   └── notifier.py       # Уведомления о задачах
-├── vosk-model-small-ru/  # Модель Vosk (не входит в репозиторий)
+├── whisper.cpp/          # whisper-cli + модель (не в git)
 ├── run.py                 # Точка входа
 ├── start.sh               # Скрипт запуска
 ├── com.claude-telegram-bot.plist  # macOS LaunchAgent
 ├── .env.example           # Пример конфигурации
+├── OPENCLAW_CRAB_SETUP.md # Крабик через OpenClaw (без Flask/MCP)
 ├── .gitignore            # Исключения для Git
 ├── requirements.txt       # Зависимости Python
 ├── LICENSE               # Лицензия MIT
@@ -312,9 +344,10 @@ cat ~/.claude/settings.json
 ffmpeg -version
 ```
 
-Проверьте что модель Vosk скачана и находится в правильной папке:
+Проверьте whisper.cpp:
 ```bash
-ls -la vosk-model-small-ru/
+ls -la whisper.cpp/whisper-cli whisper.cpp/ggml-small-q5_1.bin
+./whisper.cpp/whisper-cli -h
 ```
 
 ### "Timeout"
@@ -344,5 +377,5 @@ Contributions приветствуются! Пожалуйста, создава
 ## Благодарности
 
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) от Anthropic
-- [Vosk](https://alphacephei.com/vosk/) для офлайн распознавания речи
+- [whisper.cpp](https://github.com/ggml-org/whisper.cpp) для офлайн распознавания речи (Metal)
 - [aiogram](https://aiogram.dev/) для Telegram Bot API

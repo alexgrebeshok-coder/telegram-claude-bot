@@ -37,3 +37,31 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///claude_bot.db")
 
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# GLM-4.7 (Zhipu AI, удалённый API) — опционально
+GLM_API_KEY = os.getenv("GLM_API_KEY") or os.getenv("ZHIPUAI_API_KEY")
+# Использовать подписку (Coding API) или баланс (open.bigmodel.cn). По умолчанию true = подписка.
+GLM_USE_SUBSCRIPTION = os.getenv("GLM_USE_SUBSCRIPTION", "true").lower() in ("1", "true", "yes")
+
+# Общая локальная память: директория для экспорта диалогов (Markdown)
+BOT_MEMORY_DIR = os.getenv("BOT_MEMORY_DIR", os.path.join(CLAUDE_WORKING_DIR, "bot_memory"))
+
+# Системный промпт для Claude Code CLI (append к дефолтному)
+# По умолчанию — append_system_prompt.md в корне проекта
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+SYSTEM_PROMPT_FILE = os.getenv(
+    "SYSTEM_PROMPT_FILE",
+    os.path.join(_script_dir, "..", "append_system_prompt.md"),
+)
+
+# Whisper.cpp (распознавание речи)
+_whisper_dir = os.path.join(os.path.dirname(__file__), "..", "whisper.cpp")
+WHISPER_CPP_PATH = os.getenv(
+    "WHISPER_CPP_PATH",
+    os.path.join(_whisper_dir, "whisper-cli"),
+)
+WHISPER_MODEL_PATH = os.getenv(
+    "WHISPER_MODEL_PATH",
+    os.path.join(_whisper_dir, "ggml-small-q5_1.bin"),
+)
+WHISPER_TIMEOUT = int(os.getenv("WHISPER_TIMEOUT", "60"))

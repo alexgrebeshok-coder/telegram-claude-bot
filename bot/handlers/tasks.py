@@ -12,7 +12,16 @@ from ..database import Database
 from ..models import Task, TaskStatus
 from ..claude_client import ClaudeCodeClient
 from ..notifier import TaskNotifier
-from ..config import CLAUDE_WORKING_DIR, CLAUDE_TIMEOUT
+from ..config import (
+    CLAUDE_WORKING_DIR,
+    CLAUDE_TIMEOUT,
+    GLM_API_KEY,
+    GLM_USE_SUBSCRIPTION,
+    SYSTEM_PROMPT_FILE,
+    BOT_MEMORY_DIR,
+)
+from ..glm_client import GLMClient
+from ..memory_store import append_to_memory, load_recent_context, load_summary_context, append_summary_to_memory
 from ..utils.file_sender import extract_and_send_files
 from ..utils.text_formatter import strip_markdown
 
@@ -21,6 +30,7 @@ router = Router()
 
 db = Database()
 claude_client = ClaudeCodeClient(working_directory=CLAUDE_WORKING_DIR)
+glm_client = GLMClient(api_key=GLM_API_KEY, use_subscription=GLM_USE_SUBSCRIPTION)
 
 # Глобальные переменные
 _bot: Bot = None
@@ -31,12 +41,14 @@ user_sessions: dict[int, str] = {}  # user_id -> session_id
 user_models: dict[int, str] = {}    # user_id -> model name
 pending_confirmations: dict[str, dict] = {}  # confirm_id -> {user_id, task, message}
 
-# Доступные модели
+# Локальные модели (Claude CLI)
 AVAILABLE_MODELS = {
     "opus": "claude-opus-4-5-20250929",
     "sonnet": "claude-sonnet-4-5-20250929",
-    "haiku": "claude-haiku-4-5-20251001"
+    "haiku": "claude-haiku-4-5-20251001",
 }
+# Удалённые модели GLM (Z.AI Coding API)
+REMOTE_MODELS = {"glm4": "glm-4.7", "glm4-air": "glm-4.7-flash"}
 
 DEFAULT_MODEL = "sonnet"
 
@@ -73,16 +85,22 @@ def set_notifier(notifier: TaskNotifier):
 
 
 def get_user_model(user_id: int) -> str:
-    """Получить модель пользователя"""
-    return user_models.get(user_id, DEFAULT_MODEL)
+    """Получить модель пользователя (из памяти или БД, чтобы голос/медиа видели выбор)."""
+    if user_id in user_models:
+        return user_models[user_id]
+    model_key = db.get_user_model_key(user_id, default=DEFAULT_MODEL)
+    user_models[user_id] = model_key
+    return model_key
 
 
 def get_model_display_name(model_key: str) -> str:
     """Получить отображаемое имя модели"""
     names = {
         "opus": "Opus 4.5",
-        "sonnet": "Sonnet 4.5", 
-        "haiku": "Haiku 4.5"
+        "sonnet": "Sonnet 4.5",
+        "haiku": "Haiku 4.5",
+        "glm4": "GLM 4.7 (облако)",
+        "glm4-air": "GLM 4.7 Flash (облако)",
     }
     return names.get(model_key, model_key)
 
@@ -166,10 +184,15 @@ async def show_model_menu(message: Message):
     user_id = message.from_user.id
     current = get_user_model(user_id)
     current_name = get_model_display_name(current)
-    
+    glm_available = bool(GLM_API_KEY)
+
+    text = f"Текущая модель: **{current_name}**\n\nВыберите модель:"
+    if not glm_available:
+        text += "\n\n_GLM 4.7: задайте GLM_API_KEY в .env_"
+
     await message.answer(
-        f"Текущая модель: **{current_name}**\n\nВыберите модель:",
-        reply_markup=model_keyboard(current),
+        text,
+        reply_markup=model_keyboard(current, glm_available=glm_available),
         parse_mode="Markdown"
     )
 
@@ -178,18 +201,28 @@ async def show_model_menu(message: Message):
 async def select_model(callback: CallbackQuery):
     """Выбор модели"""
     model_key = callback.data.replace("model_", "")
-    
+
     if model_key in AVAILABLE_MODELS:
         user_models[callback.from_user.id] = model_key
+        db.set_user_model_key(callback.from_user.id, model_key)
         model_name = get_model_display_name(model_key)
-        
         claude_client.set_model(AVAILABLE_MODELS[model_key])
-        
         await callback.message.edit_text(
             f"✅ Модель: **{model_name}**",
             parse_mode="Markdown"
         )
-    
+    elif model_key in REMOTE_MODELS and GLM_API_KEY:
+        user_models[callback.from_user.id] = model_key
+        db.set_user_model_key(callback.from_user.id, model_key)
+        model_name = get_model_display_name(model_key)
+        await callback.message.edit_text(
+            f"✅ Модель: **{model_name}** (удалённый API)",
+            parse_mode="Markdown"
+        )
+    elif model_key in REMOTE_MODELS and not GLM_API_KEY:
+        await callback.answer("Добавьте GLM_API_KEY в .env", show_alert=True)
+        return
+
     await callback.answer()
 
 
@@ -214,7 +247,7 @@ async def handle_confirmation(callback: CallbackQuery):
             status_msg = await callback.message.answer("⏳")
             
             # Выполнить задачу
-            await execute_claude_task(task, user_id, status_msg)
+            await execute_llm_task(task, user_id, status_msg)
         else:
             await callback.message.edit_text("⚠️ Запрос устарел")
     
@@ -289,71 +322,134 @@ async def process_task(message: Message):
     else:
         # Безопасный запрос — выполнить сразу
         status_msg = await message.answer("⏳")
-        await execute_claude_task(task, user_id, status_msg)
+        await execute_llm_task(task, user_id, status_msg)
 
 
-async def execute_claude_task(task: Task, user_id: int, status_msg: Message):
-    """Выполнить задачу"""
+async def execute_llm_task(task: Task, user_id: int, status_msg: Message):
+    """Выполнить задачу (локальный Claude или удалённый GLM)."""
     try:
         db.update_task(task.id, TaskStatus.RUNNING)
-        
-        # Получить настройки пользователя
+
         session_id = user_sessions.get(user_id)
         model_key = get_user_model(user_id)
-        model = AVAILABLE_MODELS.get(model_key, AVAILABLE_MODELS[DEFAULT_MODEL])
-        
-        claude_client.set_model(model)
-        
-        # Выполнить
-        result = await claude_client.execute_task(
-            prompt=task.prompt,
-            session_id=session_id,
-            timeout=CLAUDE_TIMEOUT
-        )
-        
-        # Удалить индикатор
+        logger.info("execute_llm_task: user_id=%s model_key=%s", user_id, model_key)
+
+        # Для новой сессии — подставляем контекст из памяти
+        prompt = task.prompt
+        if not session_id:
+            if model_key in REMOTE_MODELS:
+                # Для GLM — используем компактный summary контекст
+                context = load_summary_context(memory_dir=BOT_MEMORY_DIR, limit=5, max_chars=1500)
+            else:
+                # Для локального Claude — полный контекст
+                context = load_recent_context(memory_dir=BOT_MEMORY_DIR, limit=3)
+            if context:
+                prompt = context + "---\nТекущий запрос: " + prompt
+
+        if model_key in REMOTE_MODELS:
+            # Удалённый API (GLM)
+            glm_client.set_model(REMOTE_MODELS[model_key])
+            if not glm_client.is_available():
+                db.update_task(task.id, TaskStatus.FAILED, error="GLM API ключ не задан")
+                try:
+                    await status_msg.delete()
+                except Exception:
+                    pass
+                await _bot.send_message(
+                    user_id,
+                    "❌ Добавьте GLM_API_KEY в .env",
+                    reply_markup=main_menu(),
+                )
+                return
+            result = await glm_client.execute_task(
+                prompt=prompt,
+                session_id=session_id,
+                timeout=CLAUDE_TIMEOUT,
+            )
+        else:
+            # Локальный Claude CLI
+            model = AVAILABLE_MODELS.get(model_key, AVAILABLE_MODELS[DEFAULT_MODEL])
+            claude_client.set_model(model)
+            result = await claude_client.execute_task(
+                prompt=prompt,
+                session_id=session_id,
+                timeout=CLAUDE_TIMEOUT,
+                system_prompt_file=SYSTEM_PROMPT_FILE,
+                memory_dir=BOT_MEMORY_DIR,
+            )
+
         try:
             await status_msg.delete()
-        except:
+        except Exception:
             pass
-        
+
         if result.get("success"):
             new_session_id = result.get("session_id")
-            if new_session_id:
+            if new_session_id and model_key not in REMOTE_MODELS:
                 user_sessions[user_id] = new_session_id
-            
+
             response_text = result.get("result", "")
             db.update_task(task.id, TaskStatus.COMPLETED, result=response_text)
-            
-            await send_result(user_id, response_text)
+
+            await send_result(user_id, response_text, model_key=model_key)
+
+            # Общая локальная память: запись в Markdown для использования другими моделями/ресурсами
+            append_to_memory(
+                created_at=task.created_at,
+                model_display=get_model_display_name(model_key),
+                prompt=task.prompt,
+                result=response_text,
+            )
+
+            # Генерируем и сохраняем summary для компактного контекста (асинхронно, не блокируем)
+            try:
+                summary = await glm_client.generate_summary(
+                    prompt=task.prompt,
+                    response=response_text,
+                    timeout=30,
+                )
+                if summary:
+                    append_summary_to_memory(
+                        summary=summary,
+                        created_at=task.created_at,
+                        memory_dir=BOT_MEMORY_DIR,
+                    )
+            except Exception as e:
+                logger.debug("Summary generation skipped: %s", e)
         else:
             error_msg = result.get("error", "Ошибка")
             db.update_task(task.id, TaskStatus.FAILED, error=error_msg)
-            
-            if "limit" in error_msg.lower():
+
+            # Не слать ошибку Claude, если пользователь уже переключился на GLM
+            # (иначе после ответа GLM прилетает задержанная ошибка от старой задачи Claude)
+            current_model = get_user_model(user_id)
+            if current_model in REMOTE_MODELS and model_key not in REMOTE_MODELS:
+                logger.info(
+                    "Пропуск отправки ошибки Claude пользователю %s: сейчас выбран %s",
+                    user_id, current_model,
+                )
+            elif "limit" in error_msg.lower():
                 await _bot.send_message(user_id, "⏸️ Лимит исчерпан.", reply_markup=main_menu())
             elif "timeout" in error_msg.lower():
                 await _bot.send_message(user_id, "⏱️ Таймаут.", reply_markup=main_menu())
             else:
                 await _bot.send_message(user_id, f"❌ {error_msg}", reply_markup=main_menu())
-    
+
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
+        logger.exception("Ошибка execute_llm_task: %s", e)
         db.update_task(task.id, TaskStatus.FAILED, error=str(e))
-        
         try:
             await status_msg.delete()
-        except:
+        except Exception:
             pass
-        
         await _bot.send_message(user_id, "❌ Ошибка.", reply_markup=main_menu())
 
 
-async def send_result(user_id: int, result: str):
-    """Отправить результат"""
+async def send_result(user_id: int, result: str, model_key: str = ""):
+    """Отправить результат пользователю. model_key — для записи в общую память."""
     if not _bot:
         return
-    
+
     # Очистить MD-разметку перед отправкой
     cleaned_result = strip_markdown(result)
     

@@ -51,19 +51,23 @@ class ClaudeCodeClient:
         return "claude"
 
     async def execute_task(
-        self, 
-        prompt: str, 
+        self,
+        prompt: str,
         session_id: Optional[str] = None,
-        timeout: int = 300
+        timeout: int = 300,
+        system_prompt_file: Optional[str] = None,
+        memory_dir: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Выполнить задачу через Claude Code CLI
-        
+
         Args:
             prompt: Текст задачи
             session_id: ID сессии для продолжения (опционально)
             timeout: Таймаут в секундах (по умолчанию 5 минут)
-            
+            system_prompt_file: Путь к файлу с доп. системным промптом (append)
+            memory_dir: Директория памяти — добавляется в --add-dir для доступа Claude
+
         Returns:
             Результат выполнения с полями success, result, session_id
         """
@@ -74,17 +78,26 @@ class ClaudeCodeClient:
                 "-p",  # Print mode — неинтерактивный
                 "--dangerously-skip-permissions",  # Без подтверждений
                 "--output-format", "json",  # JSON вывод
-                "--add-dir", self.working_directory,  # Доступ только к рабочей директории
+                "--add-dir", self.working_directory,  # Доступ к рабочей директории
             ]
-            
+
+            # Директория памяти — чтобы Claude мог читать логи
+            if memory_dir and os.path.isdir(memory_dir):
+                cmd.extend(["--add-dir", memory_dir])
+
             # Модель
             if self.model:
                 cmd.extend(["--model", self.model])
-            
+
+            # Системный промпт (append к дефолтному)
+            if system_prompt_file and os.path.isfile(system_prompt_file):
+                cmd.extend(["--append-system-prompt-file", os.path.abspath(system_prompt_file)])
+                logger.debug("Используется system prompt: %s", system_prompt_file)
+
             # Если есть сессия — продолжаем её
             if session_id:
                 cmd.extend(["--resume", session_id])
-            
+
             # Добавляем промпт
             cmd.append(prompt)
             
@@ -117,10 +130,17 @@ class ClaudeCodeClient:
             stderr_text = stderr.decode("utf-8", errors="replace")
             
             if process.returncode != 0:
-                logger.error(f"Claude CLI ошибка (код {process.returncode}): {stderr_text}")
+                # stderr часто пустой; выводим и stdout для диагностики
+                err_detail = stderr_text.strip() or stdout_text.strip()[:500] or f"код выхода {process.returncode}"
+                logger.error(
+                    "Claude CLI ошибка (код %s): stderr=%r stdout_head=%r",
+                    process.returncode,
+                    stderr_text[:500] if stderr_text else "",
+                    stdout_text[:500] if stdout_text else "",
+                )
                 return {
                     "success": False,
-                    "error": f"Claude Code ошибка: {stderr_text or 'Неизвестная ошибка'}",
+                    "error": f"Claude Code ошибка: {err_detail}",
                     "session_id": session_id
                 }
             
@@ -209,18 +229,19 @@ class ClaudeCodeClient:
         self,
         prompt: str,
         session_id: Optional[str] = None,
-        on_chunk: Optional[Callable] = None
+        on_chunk: Optional[Callable] = None,
+        system_prompt_file: Optional[str] = None,
+        memory_dir: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Выполнить задачу со стримингом (для длинных задач)
-        
+
         Args:
             prompt: Текст задачи
             session_id: ID сессии
             on_chunk: Callback для каждого чанка текста
-            
-        Returns:
-            Финальный результат
+            system_prompt_file: Путь к файлу с доп. системным промптом
+            memory_dir: Директория памяти для --add-dir
         """
         try:
             cmd = [
@@ -228,11 +249,16 @@ class ClaudeCodeClient:
                 "-p",
                 "--dangerously-skip-permissions",
                 "--output-format", "stream-json",
+                "--add-dir", self.working_directory,
             ]
-            
+            if memory_dir and os.path.isdir(memory_dir):
+                cmd.extend(["--add-dir", memory_dir])
+            if system_prompt_file and os.path.isfile(system_prompt_file):
+                cmd.extend(["--append-system-prompt-file", os.path.abspath(system_prompt_file)])
+
             if session_id:
                 cmd.extend(["--resume", session_id])
-            
+
             cmd.append(prompt)
             
             logger.info(f"Запуск Claude CLI (streaming): '{prompt[:50]}...'")

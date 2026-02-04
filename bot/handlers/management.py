@@ -7,7 +7,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from ..keyboards import main_menu, tasks_menu, task_detail_menu
 from ..database import Database
-from ..config import CLAUDE_WORKING_DIR
+from ..config import CLAUDE_WORKING_DIR, GLM_API_KEY, BOT_MEMORY_DIR
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -157,9 +157,16 @@ async def status_command(message: Message):
             status_parts.append(f"⚠️ Claude CLI: ошибка ({e})")
     else:
         status_parts.append("❌ Claude CLI: не найден")
-    
-    # Рабочая директория
+
+    # GLM 4.7 (удалённый API)
+    if GLM_API_KEY:
+        status_parts.append("✅ GLM 4.7 (API): ключ задан")
+    else:
+        status_parts.append("⚠️ GLM 4.7 (API): ключ не задан")
+
+    # Рабочая директория и память
     status_parts.append(f"📁 Рабочая папка: `{CLAUDE_WORKING_DIR}`")
+    status_parts.append(f"📂 Память (диалоги): `{BOT_MEMORY_DIR}`")
     
     # Статистика задач
     pending = db.get_pending_tasks()

@@ -21,14 +21,19 @@ def cancel_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
-def model_keyboard(current_model: str = "sonnet") -> InlineKeyboardMarkup:
-    """Клавиатура выбора модели"""
+def model_keyboard(
+    current_model: str = "sonnet",
+    glm_available: bool = False,
+) -> InlineKeyboardMarkup:
+    """Клавиатура выбора модели. GLM всегда показывается; при отсутствии ключа по нажатию — подсказка."""
     models = [
         ("opus", "Opus 4.5", "🧠"),
         ("sonnet", "Sonnet 4.5", "⚡"),
         ("haiku", "Haiku 4.5", "🚀"),
+        ("glm4", "GLM 4.7 (облако)", "🌐"),
+        ("glm4-air", "GLM 4.7 Flash (облако)", "☁️"),
     ]
-    
+
     buttons = []
     for key, name, emoji in models:
         check = " ✓" if key == current_model else ""
@@ -38,7 +43,7 @@ def model_keyboard(current_model: str = "sonnet") -> InlineKeyboardMarkup:
                 callback_data=f"model_{key}"
             )
         ])
-    
+
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 

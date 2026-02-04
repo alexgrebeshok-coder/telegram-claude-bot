@@ -34,81 +34,25 @@ db = Database()
 
 async def _execute_task_with_file(message: Message, prompt: str, file_path: str = None):
     """
-    Выполнить задачу с файлом.
-    Использует общую логику из tasks.py.
+    Выполнить задачу с файлом (или только текст).
+    Использует общую логику из tasks.py: локальный Claude или удалённый GLM.
     """
-    # Отложенный импорт для избежания циклических зависимостей
-    from .tasks import (
-        _bot, db, user_sessions, user_models, 
-        AVAILABLE_MODELS, DEFAULT_MODEL,
-        claude_client, send_result
-    )
-    
+    from .tasks import execute_llm_task
+
     user_id = message.from_user.id
-    
-    # Создать задачу в БД
+
     task_id = str(uuid.uuid4())[:8]
     task = Task(
         id=task_id,
         user_id=user_id,
         prompt=prompt,
         status=TaskStatus.PENDING,
-        created_at=datetime.now()
+        created_at=datetime.now(),
     )
     db.add_task(task)
-    
-    # Показать индикатор
+
     status_msg = await message.answer("⏳ Обрабатываю...")
-    
-    try:
-        db.update_task(task.id, TaskStatus.RUNNING)
-        
-        # Получить настройки пользователя
-        session_id = user_sessions.get(user_id)
-        model_key = user_models.get(user_id, DEFAULT_MODEL)
-        model = AVAILABLE_MODELS.get(model_key, AVAILABLE_MODELS[DEFAULT_MODEL])
-        
-        claude_client.set_model(model)
-        
-        # Выполнить
-        from ..config import CLAUDE_TIMEOUT
-        result = await claude_client.execute_task(
-            prompt=prompt,
-            session_id=session_id,
-            timeout=CLAUDE_TIMEOUT
-        )
-        
-        # Удалить индикатор
-        try:
-            await status_msg.delete()
-        except:
-            pass
-        
-        if result.get("success"):
-            new_session_id = result.get("session_id")
-            if new_session_id:
-                user_sessions[user_id] = new_session_id
-            
-            response_text = result.get("result", "")
-            db.update_task(task.id, TaskStatus.COMPLETED, result=response_text)
-            
-            await send_result(user_id, response_text)
-        else:
-            error_msg = result.get("error", "Ошибка")
-            db.update_task(task.id, TaskStatus.FAILED, error=error_msg)
-            await _bot.send_message(user_id, f"❌ {error_msg}", reply_markup=main_menu())
-    
-    except Exception as e:
-        logger.error(f"Ошибка обработки медиа: {e}")
-        db.update_task(task.id, TaskStatus.FAILED, error=str(e))
-        
-        try:
-            await status_msg.delete()
-        except:
-            pass
-        
-        from .tasks import _bot
-        await _bot.send_message(user_id, "❌ Ошибка обработки.", reply_markup=main_menu())
+    await execute_llm_task(task, user_id, status_msg)
 
 
 @router.message(F.photo)
