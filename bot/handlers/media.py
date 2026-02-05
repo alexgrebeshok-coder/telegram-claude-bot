@@ -6,7 +6,7 @@ import logging
 import uuid
 from datetime import datetime
 from pathlib import Path
-from aiogram import Router, F, Bot
+from aiogram import Router, F
 from aiogram.types import Message
 
 from ..models import Task, TaskStatus
@@ -152,7 +152,7 @@ async def handle_voice(message: Message):
         # Удалить индикатор
         try:
             await status_msg.delete()
-        except:
+        except Exception:
             pass
         
         if text:
@@ -170,7 +170,7 @@ async def handle_voice(message: Message):
         # Удалить временный файл
         try:
             os.remove(local_path)
-        except:
+        except OSError:
             pass
             
     except Exception as e:

@@ -4,7 +4,6 @@ import re
 from datetime import datetime
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
-from aiogram.filters import StateFilter, Command
 from aiogram.fsm.context import FSMContext
 from ..states import TaskStates
 from ..keyboards import cancel_keyboard, main_menu, model_keyboard, confirm_action_keyboard

@@ -5,7 +5,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from ..keyboards import main_menu, tasks_menu, task_detail_menu
+from ..keyboards import main_menu, tasks_menu
 from ..database import Database
 from ..config import CLAUDE_WORKING_DIR, GLM_API_KEY, BOT_MEMORY_DIR
 
@@ -174,13 +174,13 @@ async def status_command(message: Message):
     completed = sum(1 for t in user_tasks if t.status.value == "completed")
     failed = sum(1 for t in user_tasks if t.status.value == "failed")
     
-    status_parts.append(f"\n📈 **Статистика:**")
+    status_parts.append("\n📈 **Статистика:**")
     status_parts.append(f"• Активных задач: {len(pending)}")
     status_parts.append(f"• Выполнено: {completed}")
     status_parts.append(f"• Ошибок: {failed}")
     
     # Бот работает
-    status_parts.append(f"\n🤖 Бот: работает")
+    status_parts.append("\n🤖 Бот: работает")
     
     await message.answer(
         "\n".join(status_parts),
