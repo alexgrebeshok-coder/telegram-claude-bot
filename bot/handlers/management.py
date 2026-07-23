@@ -31,7 +31,7 @@ async def my_tasks(message: Message, state: FSMContext):
     """Показать задачи пользователя"""
     await state.clear()
 
-    tasks = db.get_user_tasks(message.from_user.id, limit=10)
+    tasks = await db.get_user_tasks(message.from_user.id, limit=10)
 
     if not tasks:
         await message.answer(
@@ -60,7 +60,7 @@ async def active_tasks(message: Message, state: FSMContext):
     """Показать активные задачи"""
     await state.clear()
 
-    tasks = db.get_pending_tasks()
+    tasks = await db.get_pending_tasks()
 
     if not tasks:
         await message.answer(
@@ -86,7 +86,7 @@ async def active_tasks(message: Message, state: FSMContext):
 @router.callback_query(F.data == "refresh_tasks")
 async def refresh_tasks(callback: CallbackQuery):
     """Обновить список задач"""
-    tasks = db.get_user_tasks(callback.from_user.id, limit=10)
+    tasks = await db.get_user_tasks(callback.from_user.id, limit=10)
 
     if not tasks:
         await callback.answer("У вас нет задач", show_alert=True)
@@ -117,7 +117,7 @@ async def close_menu(callback: CallbackQuery):
 async def show_full_result(callback: CallbackQuery):
     """Показать полный результат задачи"""
     task_id = callback.data.split("_")[-1]
-    task = db.get_task(task_id)
+    task = await db.get_task(task_id)
 
     if not task:
         await callback.answer("Задача не найдена", show_alert=True)
@@ -169,8 +169,8 @@ async def status_command(message: Message):
     status_parts.append(f"📂 Память (диалоги): `{BOT_MEMORY_DIR}`")
     
     # Статистика задач
-    pending = db.get_pending_tasks()
-    user_tasks = db.get_user_tasks(message.from_user.id, limit=100)
+    pending = await db.get_pending_tasks()
+    user_tasks = await db.get_user_tasks(message.from_user.id, limit=100)
     completed = sum(1 for t in user_tasks if t.status.value == "completed")
     failed = sum(1 for t in user_tasks if t.status.value == "failed")
     

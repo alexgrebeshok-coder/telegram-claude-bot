@@ -49,7 +49,7 @@ async def _execute_task_with_file(message: Message, prompt: str, file_path: str 
         status=TaskStatus.PENDING,
         created_at=datetime.now(),
     )
-    db.add_task(task)
+    await db.add_task(task)
 
     status_msg = await message.answer("⏳ Обрабатываю...")
     await execute_llm_task(task, user_id, status_msg)

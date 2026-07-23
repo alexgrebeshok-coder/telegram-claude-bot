@@ -15,7 +15,7 @@ class TaskNotifier:
 
     async def notify_task_completed(self, task_id: str):
         """Отправить уведомление о завершении задачи"""
-        task = self.db.get_task(task_id)
+        task = await self.db.get_task(task_id)
         if not task:
             return
 
@@ -49,7 +49,7 @@ class TaskNotifier:
 
     async def notify_task_failed(self, task_id: str):
         """Отправить уведомление об ошибке при выполнении задачи"""
-        task = self.db.get_task(task_id)
+        task = await self.db.get_task(task_id)
         if not task:
             return
 

@@ -232,113 +232,187 @@ class ClaudeCodeClient:
         on_chunk: Optional[Callable] = None,
         system_prompt_file: Optional[str] = None,
         memory_dir: Optional[str] = None,
+        cancel_event: Optional[asyncio.Event] = None,
     ) -> Dict[str, Any]:
         """
-        Выполнить задачу со стримингом (для длинных задач)
+        Выполнить задачу со стримингом.
 
-        Args:
-            prompt: Текст задачи
-            session_id: ID сессии
-            on_chunk: Callback для каждого чанка текста
-            system_prompt_file: Путь к файлу с доп. системным промптом
-            memory_dir: Директория памяти для --add-dir
+        cancel_event: asyncio.Event — установить для прерывания задачи.
         """
+        process = None
         try:
             cmd = [
                 self.claude_path,
                 "-p",
                 "--dangerously-skip-permissions",
                 "--output-format", "stream-json",
+                "--verbose",
                 "--add-dir", self.working_directory,
             ]
             if memory_dir and os.path.isdir(memory_dir):
                 cmd.extend(["--add-dir", memory_dir])
+            if self.model:
+                cmd.extend(["--model", self.model])
             if system_prompt_file and os.path.isfile(system_prompt_file):
                 cmd.extend(["--append-system-prompt-file", os.path.abspath(system_prompt_file)])
-
             if session_id:
                 cmd.extend(["--resume", session_id])
-
             cmd.append(prompt)
-            
-            logger.info(f"Запуск Claude CLI (streaming): '{prompt[:50]}...'")
-            
+
+            logger.info("Запуск Claude CLI (streaming): '%s...'", prompt[:50])
+
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=self.working_directory
+                cwd=self.working_directory,
+                # stream-json отдаёт весь результат инструмента одной строкой —
+                # дефолтных 64 КиБ StreamReader не хватает (LimitOverrunError)
+                limit=10 * 1024 * 1024,
             )
-            
+
             full_response = []
             new_session_id = session_id
-            
-            # Читаем stdout построчно
+            cancelled = False
+
             while True:
-                line = await process.stdout.readline()
+                # Проверяем сигнал отмены
+                if cancel_event and cancel_event.is_set():
+                    process.terminate()
+                    await asyncio.wait_for(process.wait(), timeout=5)
+                    cancelled = True
+                    break
+
+                try:
+                    line = await asyncio.wait_for(process.stdout.readline(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    if process.returncode is not None:
+                        break
+                    continue
+
                 if not line:
                     break
-                
+
                 try:
                     chunk = json.loads(line.decode("utf-8"))
-                    
-                    # Извлекаем session_id
                     if "session_id" in chunk:
                         new_session_id = chunk["session_id"]
-                    
-                    # Извлекаем текст
                     text = self._extract_chunk_text(chunk)
                     if text:
                         full_response.append(text)
                         if on_chunk:
                             await on_chunk(text)
-                            
                 except json.JSONDecodeError:
-                    # Не JSON строка — добавляем как есть
                     text = line.decode("utf-8").strip()
                     if text:
                         full_response.append(text)
                         if on_chunk:
                             await on_chunk(text)
-            
-            await process.wait()
-            
+
+            if not cancelled:
+                await process.wait()
+
             self.current_session_id = new_session_id
-            
+
+            if cancelled:
+                return {
+                    "success": False,
+                    "cancelled": True,
+                    "error": "Задача остановлена пользователем",
+                    "result": "".join(full_response),
+                    "session_id": new_session_id,
+                }
+
+            if process.returncode != 0:
+                stderr_text = ""
+                try:
+                    stderr_text = (await process.stderr.read()).decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+                partial = "".join(full_response)
+                error_detail = stderr_text or partial[:300] or f"exit code {process.returncode}"
+                logger.error("Claude CLI streaming error (code %s): %s", process.returncode, error_detail[:500])
+                return {
+                    "success": False,
+                    "cancelled": False,
+                    "error": error_detail,
+                    "result": partial,
+                    "session_id": new_session_id,
+                }
+
             return {
-                "success": process.returncode == 0,
+                "success": True,
+                "cancelled": False,
                 "result": "".join(full_response),
-                "session_id": new_session_id
-            }
-            
-        except Exception as e:
-            logger.error(f"Ошибка streaming: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "session_id": session_id
+                "session_id": new_session_id,
             }
 
+        except Exception as e:
+            logger.error("Ошибка streaming: %s", e)
+            if process:
+                try:
+                    process.terminate()
+                except Exception:
+                    pass
+            return {
+                "success": False,
+                "cancelled": False,
+                "error": str(e),
+                "session_id": session_id,
+            }
+
+    # Иконки инструментов Claude для прогресс-индикатора
+    TOOL_ICONS = {
+        "Bash": "⚙️", "Read": "📖", "Write": "✏️", "Edit": "📝",
+        "MultiEdit": "📝", "WebSearch": "🌐", "WebFetch": "🔗",
+        "LS": "📂", "Glob": "🔍", "Grep": "🔎", "TodoWrite": "📋",
+        "TodoRead": "📋", "Agent": "🤖", "Task": "🤖",
+        "NotebookRead": "📒", "NotebookEdit": "📒",
+    }
+
     def _extract_chunk_text(self, chunk: Dict[str, Any]) -> str:
-        """Извлечь текст из streaming чанка"""
-        if "content" in chunk:
-            content = chunk["content"]
-            if isinstance(content, str):
-                return content
-            if isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        return block.get("text", "")
-        
-        if "delta" in chunk:
-            delta = chunk["delta"]
-            if isinstance(delta, dict):
-                return delta.get("text", "")
-            return str(delta)
-        
-        if "text" in chunk:
-            return chunk["text"]
-        
+        """Извлечь текст из stream-json события Claude CLI.
+
+        Форматы событий (--output-format stream-json --verbose):
+          type=assistant  → message.content[].type==text   — основной текст
+          type=assistant  → message.content[].type==tool_use — вызов инструмента
+          type=result     — итоговый текст (дубль, пропускаем)
+
+        Для tool_use возвращаем строку с префиксом \\x00 (маркер инструмента)
+        чтобы обработчик в tasks.py мог отделить инструменты от текста.
+        """
+        chunk_type = chunk.get("type", "")
+
+        if chunk_type == "assistant":
+            message = chunk.get("message", {})
+            for block in message.get("content", []):
+                if not isinstance(block, dict):
+                    continue
+                block_type = block.get("type", "")
+                if block_type == "text":
+                    return block.get("text", "")
+                elif block_type == "tool_use":
+                    tool_name = block.get("name", "?")
+                    tool_input = block.get("input", {})
+                    icon = self.TOOL_ICONS.get(tool_name, "🔧")
+                    # Выбираем наиболее информативный параметр
+                    if "command" in tool_input:
+                        detail = str(tool_input["command"])[:80]
+                    elif "file_path" in tool_input:
+                        detail = os.path.basename(str(tool_input["file_path"]))
+                    elif "path" in tool_input:
+                        detail = os.path.basename(str(tool_input["path"]))
+                    elif "query" in tool_input:
+                        detail = str(tool_input["query"])[:60]
+                    elif "url" in tool_input:
+                        detail = str(tool_input["url"])[:60]
+                    elif tool_input:
+                        detail = str(next(iter(tool_input.values())))[:60]
+                    else:
+                        detail = ""
+                    # \x00 — маркер инструмента для tasks.py
+                    return f"\x00{icon} {tool_name}: {detail}"
+
         return ""
 
     async def check_availability(self) -> bool:
